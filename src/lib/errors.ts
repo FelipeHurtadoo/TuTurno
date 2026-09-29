@@ -14,6 +14,7 @@ const DB_ERRORS: Record<string, string> = {
   SLUG_EN_USO: 'Ese enlace ya está en uso. Inténtalo de nuevo.',
   YA_TIENES_NEGOCIO: 'Tu cuenta ya tiene un negocio registrado.',
   DATOS_INVALIDOS: 'Revisa los datos del negocio (el nombre debe tener entre 2 y 80 caracteres).',
+  PLAN_INVALIDO: 'Ese plan no es válido.',
 }
 
 const OTHER_ERRORS: Array<[RegExp, string]> = [

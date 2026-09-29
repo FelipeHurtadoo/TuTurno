@@ -7,5 +7,5 @@ export async function middleware(request: NextRequest) {
 
 // Solo corre donde hay sesión de administrador; las páginas públicas de clientes no pasan por aquí.
 export const config = {
-  matcher: ['/panel/:path*', '/login', '/registro'],
+  matcher: ['/panel/:path*', '/admin/:path*', '/login', '/registro'],
 }

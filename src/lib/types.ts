@@ -74,3 +74,13 @@ export interface AdminSnapshot {
   stats: AdminStats
   tickets: AdminTicket[]
 }
+
+export interface SuperAdminBusiness {
+  id: string
+  name: string
+  slug: string
+  plan: 'free' | 'pro'
+  daily_limit: number
+  created_at: string
+  issued_today: number
+}

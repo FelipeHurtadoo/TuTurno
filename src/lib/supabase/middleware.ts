@@ -45,7 +45,7 @@ export async function updateSession(request: NextRequest) {
     return redirect
   }
 
-  if (!isLoggedIn && path.startsWith('/panel')) return redirectTo('/login')
+  if (!isLoggedIn && (path.startsWith('/panel') || path.startsWith('/admin'))) return redirectTo('/login')
   if (isLoggedIn && (path === '/login' || path === '/registro')) return redirectTo('/panel')
 
   return response

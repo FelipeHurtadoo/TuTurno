@@ -594,6 +594,103 @@ begin
 end;
 $$;
 
+-- ---------- Super administrador (dueño de la plataforma) ---------------
+--
+-- Cobros del plan Pro por transferencia bancaria (no hay pasarela de pagos):
+-- este acceso es SOLO para el dueño de TuTurno, nunca para los dueños de negocios.
+-- Mismo patrón que el resto del archivo: RLS activo, sin políticas (nadie lee/
+-- escribe la tabla directo, ni siquiera el propio super admin), todo por
+-- funciones SECURITY DEFINER con GRANT/REVOKE explícito.
+
+create table if not exists public.super_admins (
+  user_id uuid primary key references auth.users (id) on delete cascade
+);
+
+alter table public.super_admins enable row level security;
+revoke all on public.super_admins from anon, authenticated;
+-- Sin políticas a propósito: ni siquiera el super admin lee/escribe esta tabla
+-- directo desde el cliente. Solo se consulta DENTRO de las funciones de abajo.
+
+create or replace function public._assert_super_admin()
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if auth.uid() is null or not exists (
+    select 1 from public.super_admins where user_id = auth.uid()
+  ) then
+    raise exception 'SIN_PERMISO';
+  end if;
+end;
+$$;
+
+-- Lista todos los negocios (todas las cuentas) para el panel del super admin.
+create or replace function public.admin_list_businesses()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform public._assert_super_admin();
+
+  return coalesce((
+    select jsonb_agg(
+      jsonb_build_object(
+        'id', b.id,
+        'name', b.name,
+        'slug', b.slug,
+        'plan', b.plan,
+        'daily_limit', b.daily_limit,
+        'created_at', b.created_at,
+        'issued_today', (
+          select count(*) from public.tickets t
+           where t.business_id = b.id and t.ticket_date = public.bogota_today()
+        )
+      ) order by b.created_at desc
+    )
+    from public.businesses b
+  ), '[]'::jsonb);
+end;
+$$;
+
+-- Cambia el plan de CUALQUIER negocio (cobro manual por transferencia).
+create or replace function public.admin_set_plan(p_business_id uuid, p_plan text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform public._assert_super_admin();
+
+  if p_plan not in ('free', 'pro') then
+    raise exception 'PLAN_INVALIDO';
+  end if;
+
+  update public.businesses set plan = p_plan where id = p_business_id;
+  if not found then
+    raise exception 'NEGOCIO_NO_ENCONTRADO';
+  end if;
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+revoke all on function public._assert_super_admin()         from public, anon, authenticated;
+revoke all on function public.admin_list_businesses()        from public, anon, authenticated;
+revoke all on function public.admin_set_plan(uuid, text)     from public, anon, authenticated;
+grant execute on function public.admin_list_businesses()     to authenticated;
+grant execute on function public.admin_set_plan(uuid, text)  to authenticated;
+
+-- Para agregarte como el primer super admin: copia tu user_id desde
+-- Authentication → Users en el dashboard de Supabase y corre esto UNA VEZ
+-- a mano en el SQL Editor (con la sesión del dashboard, no desde el frontend):
+--
+--   insert into public.super_admins (user_id) values ('TU-USER-ID-AQUI');
+
 -- ---------- Retención de datos (RNF06: datos mínimos) ------------------
 
 -- Borra turnos con más de p_days días. No se expone a la API; se ejecuta desde pg_cron o el SQL Editor.

@@ -128,5 +128,24 @@ if [ "$before" != "$after" ]; then PASS=$((PASS+1)); echo "  ✅ cada cambio toc
 out=$(q anon "" "select count(*) from queue_state;"); check "anon puede leer queue_state (para Realtime)" "$out" '^[0-9]'
 out=$(q anon "" "select * from queue_state limit 1;"); if echo "$out" | grep -q 'customer'; then echo "  ❌"; FAIL=$((FAIL+1)); else PASS=$((PASS+1)); echo "  ✅ queue_state no contiene datos personales"; fi
 
+echo "== Super admin (cobros por transferencia) =="
+UC=33333333-3333-3333-3333-333333333333
+sup "insert into auth.users(id,email) values ('$UC','c@x.co')" >/dev/null
+out=$(q authenticated $UA "select admin_list_businesses();");           check "dueño normal NO puede listar negocios" "$out" 'SIN_PERMISO'
+out=$(q authenticated $UA "select admin_set_plan('$BB','pro');");       check "dueño normal NO puede cambiar planes" "$out" 'SIN_PERMISO'
+out=$(q anon "" "select admin_list_businesses();");                     check "anon no ejecuta admin_list_businesses" "$out" 'permission denied'
+out=$(q anon "" "select admin_set_plan('$BB','pro');");                 check "anon no ejecuta admin_set_plan" "$out" 'permission denied'
+out=$(q authenticated "" "select admin_list_businesses();");            check "sin sesión (uid nulo) → SIN_PERMISO" "$out" 'SIN_PERMISO'
+
+sup "insert into public.super_admins (user_id) values ('$UC')" >/dev/null
+out=$(q authenticated $UC "select admin_list_businesses();")
+check "super admin lista TODOS los negocios (A y B)" "$out" '"slug": "pelu-ana-x1"'
+check "super admin ve también el negocio de B" "$out" '"slug": "barberia-beto-z9"'
+out=$(q authenticated $UC "select admin_set_plan('$BB','pro');");       check "super admin sube a B a plan pro" "$out" '"ok": true'
+out=$(sup "select plan from businesses where id='$BB'");                check "plan de B quedó en pro" "$out" 'pro'
+out=$(q authenticated $UC "select admin_set_plan('$BB','bogus');");     check "plan inventado rechazado" "$out" 'PLAN_INVALIDO'
+out=$(q authenticated $UC "select admin_set_plan('00000000-0000-0000-0000-000000000000','free');"); check "negocio inexistente" "$out" 'NEGOCIO_NO_ENCONTRADO'
+out=$(q authenticated $UC "select * from super_admins;");               check "ni el propio super admin lee la tabla directo" "$out" 'permission denied'
+
 echo; echo "RESULTADO: $PASS pruebas OK, $FAIL fallidas"
 [ $FAIL -eq 0 ]
