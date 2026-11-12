@@ -147,5 +147,52 @@ out=$(q authenticated $UC "select admin_set_plan('$BB','bogus');");     check "p
 out=$(q authenticated $UC "select admin_set_plan('00000000-0000-0000-0000-000000000000','free');"); check "negocio inexistente" "$out" 'NEGOCIO_NO_ENCONTRADO'
 out=$(q authenticated $UC "select * from super_admins;");               check "ni el propio super admin lee la tabla directo" "$out" 'permission denied'
 
+echo "== Pantalla pública con nombre corto =="
+out=$(sup "select _short_name('Laura María Gómez') || '/' || _short_name('  Pedro  ') || '/' || _short_name('ana pérez')")
+check "nombre corto: 'Laura M.' / 'Pedro' / 'ana P.'" "$out" '^Laura M\./Pedro/ana P\.$'
+out=$(q anon "" "select _short_name('x');");                           check "anon no ejecuta _short_name directo" "$out" 'permission denied'
+out=$(q anon "" "select get_public_board('pelu-ana-x1');")
+check "pantalla incluye next_tickets con nombre" "$out" '"next_tickets": \['
+check "pantalla incluye now_serving_name" "$out" '"now_serving_name"'
+if echo "$out" | grep -q 'customer_phone'; then FAIL=$((FAIL+1)); echo "  ❌ pantalla filtra celulares"; else PASS=$((PASS+1)); echo "  ✅ pantalla no expone celulares"; fi
+
+echo "== Logo del negocio =="
+out=$(q authenticated $UA "select set_business_logo('$BA/logo-1.png');");  check "dueño guarda logo en SU carpeta" "$out" '"ok": true'
+out=$(q anon "" "select get_join_info('pelu-ana-x1');");                  check "página de ingreso devuelve logo_path" "$out" "\"logo_path\": \"$BA/logo-1.png\""
+out=$(q authenticated $UA "select set_business_logo('$BB/logo-1.png');");  check "dueño NO apunta al logo de otro negocio" "$out" 'LOGO_INVALIDO'
+out=$(q authenticated $UA "select set_business_logo('../../x.png');");    check "ruta con ../ rechazada" "$out" 'LOGO_INVALIDO'
+out=$(q authenticated $UA "select set_business_logo(null);");             check "dueño puede quitar su logo" "$out" '"logo_path": null'
+out=$(q anon "" "select set_business_logo('$BA/x.png');");                check "anon no ejecuta set_business_logo" "$out" 'permission denied'
+
+echo "== Solicitudes de cambio de plan =="
+sup "update businesses set plan='free' where id='$BA'" >/dev/null
+out=$(q authenticated $UA "select request_plan_change('free');");         check "no se pide el plan que ya tienes" "$out" 'YA_TIENES_ESE_PLAN'
+out=$(q authenticated $UA "select request_plan_change('gold');");         check "plan inventado rechazado" "$out" 'PLAN_INVALIDO'
+out=$(q authenticated $UA "select request_plan_change('pro');");          check "A solicita plan pro" "$out" '"status": "pending"'
+out=$(q authenticated $UA "select request_plan_change('pro');");          check "solo una solicitud pendiente a la vez" "$out" 'SOLICITUD_PENDIENTE'
+out=$(sup "select plan from businesses where id='$BA'");                  check "solicitar NO cambia el plan" "$out" '^free$'
+out=$(q authenticated $UA "select get_my_plan_request();");               check "A ve su solicitud pendiente" "$out" '"status": "pending"'
+out=$(q authenticated $UA "select * from plan_requests;");                check "dueño no lee plan_requests directo" "$out" 'permission denied'
+out=$(q authenticated $UA "select admin_list_plan_requests();");          check "dueño no lista solicitudes de otros" "$out" 'SIN_PERMISO'
+REQ=$(sup "select id from plan_requests where business_id='$BA' and status='pending'")
+out=$(q authenticated $UA "select admin_resolve_plan_request('$REQ', true);"); check "dueño NO puede aprobarse a sí mismo" "$out" 'SIN_PERMISO'
+out=$(q anon "" "select request_plan_change('pro');");                    check "anon no ejecuta request_plan_change" "$out" 'permission denied'
+out=$(q authenticated $UC "select admin_list_plan_requests();")
+check "super admin ve la solicitud" "$out" '"business_slug": "pelu-ana-x1"'
+check "super admin ve el correo del dueño" "$out" '"owner_email": "a@x.co"'
+out=$(q authenticated $UC "select admin_resolve_plan_request('$REQ', false);"); check "super admin rechaza" "$out" '"approved": false'
+out=$(sup "select plan from businesses where id='$BA'");                  check "rechazada: sigue en free" "$out" '^free$'
+out=$(q authenticated $UC "select admin_resolve_plan_request('$REQ', true);");  check "no se resuelve dos veces" "$out" 'SOLICITUD_YA_RESUELTA'
+out=$(q authenticated $UA "select get_my_plan_request();");               check "A ve que fue rechazada" "$out" '"status": "rejected"'
+q authenticated $UA "select request_plan_change('pro');" >/dev/null
+REQ2=$(sup "select id from plan_requests where business_id='$BA' and status='pending'")
+out=$(q authenticated $UC "select admin_resolve_plan_request('$REQ2', true);"); check "super admin aprueba" "$out" '"approved": true'
+out=$(sup "select plan from businesses where id='$BA'");                  check "aprobada: A quedó en pro" "$out" '^pro$'
+out=$(q authenticated $UA "select request_plan_change('free');");         check "A (pro) solicita volver a gratis" "$out" '"status": "pending"'
+out=$(q authenticated $UA "select cancel_plan_request();");               check "A retira su solicitud" "$out" '"cancelled": true'
+q authenticated $UA "select request_plan_change('free');" >/dev/null
+q authenticated $UC "select admin_set_plan('$BA','free');" >/dev/null
+out=$(sup "select status from plan_requests where business_id='$BA' order by created_at desc limit 1"); check "cambio manual cierra la solicitud pendiente" "$out" '^approved$'
+
 echo; echo "RESULTADO: $PASS pruebas OK, $FAIL fallidas"
 [ $FAIL -eq 0 ]

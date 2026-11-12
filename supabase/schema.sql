@@ -10,7 +10,8 @@
 --     escrituras pasan por funciones SECURITY DEFINER que validan la entrada
 --     y, cuando aplica, que el usuario sea el DUEÑO del negocio (auth.uid()).
 --  3. Los clientes (anónimos) no pueden leer la tabla de turnos. Solo conocen
---     su turno por un token secreto aleatorio y ven números, nunca nombres.
+--     su turno por un token secreto aleatorio. La pantalla pública muestra
+--     números y un nombre corto ("Laura M."), nunca celulares ni nombres completos.
 --  4. Las funciones se revocan de PUBLIC/anon y se otorgan una por una.
 -- =====================================================================
 
@@ -37,6 +38,10 @@ create table if not exists public.businesses (
   constraint businesses_slug_key unique (slug),
   constraint businesses_owner_id_key unique (owner_id)  -- 1 negocio por cuenta (sin multi-sede en el MVP)
 );
+
+-- Logo del negocio: ruta del archivo dentro del bucket público "logos" de Supabase Storage
+-- (formato '<business_id>/<archivo>'). Solo se cambia con set_business_logo().
+alter table public.businesses add column if not exists logo_path text;
 
 create table if not exists public.tickets (
   id             uuid primary key default gen_random_uuid(),
@@ -246,6 +251,7 @@ begin
     'id', v_business.id,
     'name', v_business.name,
     'slug', v_business.slug,
+    'logo_path', v_business.logo_path,
     'accepting', not (v_business.plan = 'free' and v_issued >= v_business.daily_limit)
   );
 end;
@@ -329,6 +335,7 @@ begin
     'business_id', v_b.id,
     'business_name', v_b.name,
     'business_slug', v_b.slug,
+    'business_logo_path', v_b.logo_path,
     'now_serving', v_now,
     'people_ahead', v_ahead,
     'estimated_wait_seconds',
@@ -355,7 +362,22 @@ begin
 end;
 $$;
 
--- RF07: pantalla pública. SOLO números: jamás nombres ni celulares (RNF06).
+-- Nombre corto para la pantalla pública: primer nombre + inicial del apellido ("Laura M.").
+-- Así el cliente se reconoce en la pantalla sin exponer su nombre completo ni su celular (RNF06).
+create or replace function public._short_name(p_name text)
+returns text
+language sql
+immutable
+set search_path = public, pg_temp
+as $$
+  select case
+    when position(' ' in btrim(coalesce(p_name, ''))) = 0 then btrim(coalesce(p_name, ''))
+    else split_part(btrim(p_name), ' ', 1) || ' ' ||
+         upper(left(btrim(substr(btrim(p_name), position(' ' in btrim(p_name)))), 1)) || '.'
+  end
+$$;
+
+-- RF07: pantalla pública. Números + nombre corto ("Laura M."); jamás celulares ni nombres completos.
 create or replace function public.get_public_board(p_slug text)
 returns jsonb
 language plpgsql
@@ -363,27 +385,38 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_b     public.businesses%rowtype;
-  v_today date := public.bogota_today();
+  v_b       public.businesses%rowtype;
+  v_today   date := public.bogota_today();
+  v_current public.tickets%rowtype;
 begin
   select * into v_b from public.businesses where slug = lower(btrim(p_slug));
   if not found then
     return jsonb_build_object('found', false);
   end if;
 
+  select * into v_current from public.tickets
+   where business_id = v_b.id and ticket_date = v_today and called_at is not null
+   order by called_at desc limit 1;
+
   return jsonb_build_object(
     'found', true,
     'business_id', v_b.id,
     'name', v_b.name,
-    'now_serving', (
-      select number from public.tickets
-       where business_id = v_b.id and ticket_date = v_today and called_at is not null
-       order by called_at desc limit 1
-    ),
+    'logo_path', v_b.logo_path,
+    'now_serving', v_current.number,
+    'now_serving_name', case when v_current.id is not null then public._short_name(v_current.customer_name) end,
     'next', coalesce((
       select jsonb_agg(n.number order by n.number)
         from (
           select number from public.tickets
+           where business_id = v_b.id and ticket_date = v_today and status = 'waiting'
+           order by number limit 5
+        ) n
+    ), '[]'::jsonb),
+    'next_tickets', coalesce((
+      select jsonb_agg(jsonb_build_object('number', n.number, 'name', public._short_name(n.customer_name)) order by n.number)
+        from (
+          select number, customer_name from public.tickets
            where business_id = v_b.id and ticket_date = v_today and status = 'waiting'
            order by number limit 5
         ) n
@@ -645,6 +678,7 @@ begin
         'plan', b.plan,
         'daily_limit', b.daily_limit,
         'created_at', b.created_at,
+        'logo_path', b.logo_path,
         'issued_today', (
           select count(*) from public.tickets t
            where t.business_id = b.id and t.ticket_date = public.bogota_today()
@@ -691,6 +725,294 @@ grant execute on function public.admin_set_plan(uuid, text)  to authenticated;
 --
 --   insert into public.super_admins (user_id) values ('TU-USER-ID-AQUI');
 
+-- ---------- Logo del negocio (Supabase Storage) ------------------------
+--
+-- Bucket PÚBLICO "logos" (cualquiera puede VER los logos, que no son datos personales).
+-- Solo el dueño puede subir/borrar archivos dentro de SU carpeta '<business_id>/'.
+-- Va dentro de un IF para que este archivo también corra en un Postgres sin Storage (pruebas).
+
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('logos', 'logos', true, 2097152, array['image/png', 'image/jpeg', 'image/webp'])
+    on conflict (id) do update
+      set public = true,
+          file_size_limit = excluded.file_size_limit,
+          allowed_mime_types = excluded.allowed_mime_types;
+
+    execute 'drop policy if exists logos_select_own on storage.objects';
+    execute 'drop policy if exists logos_insert_own on storage.objects';
+    execute 'drop policy if exists logos_delete_own on storage.objects';
+
+    execute $p$
+      create policy logos_select_own on storage.objects for select to authenticated
+      using (bucket_id = 'logos' and (storage.foldername(name))[1] in (
+        select id::text from public.businesses where owner_id = (select auth.uid())))
+    $p$;
+    execute $p$
+      create policy logos_insert_own on storage.objects for insert to authenticated
+      with check (bucket_id = 'logos' and (storage.foldername(name))[1] in (
+        select id::text from public.businesses where owner_id = (select auth.uid())))
+    $p$;
+    execute $p$
+      create policy logos_delete_own on storage.objects for delete to authenticated
+      using (bucket_id = 'logos' and (storage.foldername(name))[1] in (
+        select id::text from public.businesses where owner_id = (select auth.uid())))
+    $p$;
+  end if;
+end;
+$$;
+
+-- Guarda (o quita, con null) la ruta del logo del negocio del usuario.
+-- La ruta debe estar dentro de la carpeta de SU negocio: nadie apunta al logo de otro.
+create or replace function public.set_business_logo(p_path text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_b    public.businesses%rowtype;
+  v_path text := nullif(btrim(coalesce(p_path, '')), '');
+begin
+  if auth.uid() is null then
+    raise exception 'NO_AUTENTICADO';
+  end if;
+  select * into v_b from public.businesses where owner_id = auth.uid();
+  if not found then
+    raise exception 'NEGOCIO_NO_ENCONTRADO';
+  end if;
+
+  if v_path is not null and (
+       v_path !~ '^[0-9a-f-]{36}/[A-Za-z0-9._-]{1,80}$'
+       or split_part(v_path, '/', 1) <> v_b.id::text
+     ) then
+    raise exception 'LOGO_INVALIDO';
+  end if;
+
+  update public.businesses set logo_path = v_path where id = v_b.id;
+  -- Avisa a la pantalla pública (Realtime) para que muestre el logo nuevo sin recargar.
+  insert into public.queue_state (business_id, updated_at) values (v_b.id, clock_timestamp())
+  on conflict (business_id) do update set updated_at = clock_timestamp();
+
+  return jsonb_build_object('ok', true, 'logo_path', v_path);
+end;
+$$;
+
+revoke all on function public.set_business_logo(text) from public, anon, authenticated;
+grant execute on function public.set_business_logo(text) to authenticated;
+
+-- ---------- Solicitudes de cambio de plan ------------------------------
+--
+-- El dueño SOLICITA pasar a Pro (o volver a gratis); el super admin la ACEPTA o la NIEGA.
+-- El dueño nunca cambia su plan directamente.
+
+create table if not exists public.plan_requests (
+  id             uuid primary key default gen_random_uuid(),
+  business_id    uuid not null references public.businesses (id) on delete cascade,
+  requested_plan text not null check (requested_plan in ('free', 'pro')),
+  status         text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'cancelled')),
+  created_at     timestamptz not null default now(),
+  resolved_at    timestamptz
+);
+
+-- Máximo UNA solicitud pendiente por negocio.
+create unique index if not exists plan_requests_one_pending
+  on public.plan_requests (business_id) where status = 'pending';
+
+alter table public.plan_requests enable row level security;
+revoke all on public.plan_requests from anon, authenticated;
+-- Sin políticas: todo el acceso es por las funciones de abajo.
+
+-- Dueño: crea la solicitud de cambio de plan.
+create or replace function public.request_plan_change(p_plan text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_b  public.businesses%rowtype;
+  v_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'NO_AUTENTICADO';
+  end if;
+  if p_plan is null or p_plan not in ('free', 'pro') then
+    raise exception 'PLAN_INVALIDO';
+  end if;
+  select * into v_b from public.businesses where owner_id = auth.uid() for update;
+  if not found then
+    raise exception 'NEGOCIO_NO_ENCONTRADO';
+  end if;
+  if v_b.plan = p_plan then
+    raise exception 'YA_TIENES_ESE_PLAN';
+  end if;
+  if exists (select 1 from public.plan_requests where business_id = v_b.id and status = 'pending') then
+    raise exception 'SOLICITUD_PENDIENTE';
+  end if;
+
+  insert into public.plan_requests (business_id, requested_plan)
+  values (v_b.id, p_plan)
+  returning id into v_id;
+
+  return jsonb_build_object('id', v_id, 'requested_plan', p_plan, 'status', 'pending');
+end;
+$$;
+
+-- Dueño: retira su solicitud pendiente.
+create or replace function public.cancel_plan_request()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'NO_AUTENTICADO';
+  end if;
+  update public.plan_requests r
+     set status = 'cancelled', resolved_at = now()
+    from public.businesses b
+   where r.business_id = b.id and b.owner_id = auth.uid() and r.status = 'pending'
+  returning r.id into v_id;
+  return jsonb_build_object('cancelled', v_id is not null);
+end;
+$$;
+
+-- Dueño: última solicitud de su negocio (para mostrar "pendiente", "aprobada" o "rechazada").
+create or replace function public.get_my_plan_request()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_r public.plan_requests%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'NO_AUTENTICADO';
+  end if;
+  select r.* into v_r
+    from public.plan_requests r
+    join public.businesses b on b.id = r.business_id
+   where b.owner_id = auth.uid() and r.status <> 'cancelled'
+   order by r.created_at desc
+   limit 1;
+  if not found then
+    return null;
+  end if;
+  return jsonb_build_object(
+    'id', v_r.id, 'requested_plan', v_r.requested_plan, 'status', v_r.status,
+    'created_at', v_r.created_at, 'resolved_at', v_r.resolved_at
+  );
+end;
+$$;
+
+-- Super admin: solicitudes pendientes (con el correo del dueño para coordinar el pago).
+create or replace function public.admin_list_plan_requests()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  perform public._assert_super_admin();
+
+  return coalesce((
+    select jsonb_agg(
+      jsonb_build_object(
+        'id', r.id,
+        'business_id', b.id,
+        'business_name', b.name,
+        'business_slug', b.slug,
+        'current_plan', b.plan,
+        'requested_plan', r.requested_plan,
+        'owner_email', u.email,
+        'created_at', r.created_at
+      ) order by r.created_at
+    )
+    from public.plan_requests r
+    join public.businesses b on b.id = r.business_id
+    left join auth.users u on u.id = b.owner_id
+   where r.status = 'pending'
+  ), '[]'::jsonb);
+end;
+$$;
+
+-- Super admin: acepta (cambia el plan) o niega la solicitud.
+create or replace function public.admin_resolve_plan_request(p_request_id uuid, p_approve boolean)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_r       public.plan_requests%rowtype;
+  v_approve boolean := coalesce(p_approve, false);
+begin
+  perform public._assert_super_admin();
+
+  select * into v_r from public.plan_requests where id = p_request_id for update;
+  if not found then
+    raise exception 'SOLICITUD_NO_ENCONTRADA';
+  end if;
+  if v_r.status <> 'pending' then
+    raise exception 'SOLICITUD_YA_RESUELTA';
+  end if;
+
+  update public.plan_requests
+     set status = case when v_approve then 'approved' else 'rejected' end,
+         resolved_at = now()
+   where id = v_r.id;
+
+  if v_approve then
+    update public.businesses set plan = v_r.requested_plan where id = v_r.business_id;
+  end if;
+
+  return jsonb_build_object('ok', true, 'approved', v_approve);
+end;
+$$;
+
+-- Si el super admin cambia el plan a mano (admin_set_plan), una solicitud pendiente
+-- que pedía justo ese plan se marca como aprobada; si pedía otro, deja de tener sentido y se cierra.
+create or replace function public._close_stale_plan_requests()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.plan is distinct from old.plan then
+    update public.plan_requests
+       set status = case when requested_plan = new.plan then 'approved' else 'cancelled' end,
+           resolved_at = now()
+     where business_id = new.id and status = 'pending';
+  end if;
+  return null;
+end;
+$$;
+
+drop trigger if exists businesses_close_stale_plan_requests on public.businesses;
+create trigger businesses_close_stale_plan_requests
+  after update of plan on public.businesses
+  for each row execute function public._close_stale_plan_requests();
+
+revoke all on function public._close_stale_plan_requests()               from public, anon, authenticated;
+revoke all on function public.request_plan_change(text)                  from public, anon, authenticated;
+revoke all on function public.cancel_plan_request()                      from public, anon, authenticated;
+revoke all on function public.get_my_plan_request()                      from public, anon, authenticated;
+revoke all on function public.admin_list_plan_requests()                 from public, anon, authenticated;
+revoke all on function public.admin_resolve_plan_request(uuid, boolean)  from public, anon, authenticated;
+grant execute on function public.request_plan_change(text)                 to authenticated;
+grant execute on function public.cancel_plan_request()                     to authenticated;
+grant execute on function public.get_my_plan_request()                     to authenticated;
+grant execute on function public.admin_list_plan_requests()                to authenticated;
+grant execute on function public.admin_resolve_plan_request(uuid, boolean) to authenticated;
+
 -- ---------- Retención de datos (RNF06: datos mínimos) ------------------
 
 -- Borra turnos con más de p_days días. No se expone a la API; se ejecuta desde pg_cron o el SQL Editor.
@@ -717,6 +1039,7 @@ revoke all on function public._assert_owner(uuid)                               
 revoke all on function public._create_ticket(uuid, text, text, uuid, text, boolean) from public, anon, authenticated;
 revoke all on function public.touch_queue_state()                                   from public, anon, authenticated;
 revoke all on function public.purge_old_tickets(integer)                            from public, anon, authenticated;
+revoke all on function public._short_name(text)                                     from public, anon, authenticated;
 
 revoke all on function public.get_join_info(text)                        from public, anon, authenticated;
 revoke all on function public.join_queue(text, text, text, uuid, boolean) from public, anon, authenticated;

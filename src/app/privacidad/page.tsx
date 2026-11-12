@@ -37,8 +37,9 @@ export default function PrivacyPage() {
 
         <h2 className="text-lg font-bold">¿Quién los puede ver?</h2>
         <p>
-          Solo el negocio donde tomaste tu turno. La pantalla pública del local muestra <strong>únicamente números de turno</strong>,
-          nunca nombres ni celulares.
+          Solo el negocio donde tomaste tu turno. La pantalla pública del local muestra el <strong>número de turno y tu nombre
+          abreviado</strong> (primer nombre e inicial del apellido, por ejemplo &quot;Laura M.&quot;) para que sepas cuándo te llaman.
+          Nunca muestra tu nombre completo ni tu celular.
         </p>
 
         <h2 className="text-lg font-bold">¿Cuánto tiempo se conservan?</h2>

@@ -3,23 +3,27 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useMemo, useState } from 'react'
+import BusinessLogo from './BusinessLogo'
 import Logo from './Logo'
+import LogoUploader from './LogoUploader'
+import PlanRequestCard from './PlanRequestCard'
 import { useOrigin } from './QrImage'
 import { createClient } from '@/lib/supabase/client'
 import { friendlyError, isAuthError } from '@/lib/errors'
 import { formatDuration, formatTime } from '@/lib/format'
 import { useQueueSync } from '@/lib/useQueueSync'
 import { manualTicketSchema } from '@/lib/validation'
-import type { AdminSnapshot, AdminTicket, Business } from '@/lib/types'
+import type { AdminSnapshot, AdminTicket, Business, MyPlanRequest } from '@/lib/types'
 
 interface Props {
   business: Business
   initial: AdminSnapshot
+  planRequest?: MyPlanRequest | null
 }
 
 type Result = PromiseLike<{ error: { message: string } | null }>
 
-export default function PanelClient({ business, initial }: Props) {
+export default function PanelClient({ business, initial, planRequest = null }: Props) {
   const router = useRouter()
   const origin = useOrigin()
   const [snap, setSnap] = useState<AdminSnapshot>(initial)
@@ -27,6 +31,7 @@ export default function PanelClient({ business, initial }: Props) {
   const [message, setMessage] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null)
   const [manualName, setManualName] = useState('')
   const [manualPhone, setManualPhone] = useState('')
+  const [logoPath, setLogoPath] = useState<string | null>(business.logo_path ?? null)
 
   const handleError = useCallback(
     (raw: string) => {
@@ -96,6 +101,7 @@ export default function PanelClient({ business, initial }: Props) {
           <div className="flex items-center gap-4">
             <Logo href="/panel" />
             <span className="hidden text-slate-400 sm:inline">|</span>
+            <BusinessLogo path={logoPath} name={business.name} className="h-8 w-8" />
             <span className="font-semibold">{business.name}</span>
             <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${stats.plan === 'free' ? 'bg-slate-200 text-slate-800' : 'bg-indigo-100 text-indigo-800'}`}>
               Plan {stats.plan === 'free' ? 'gratuito' : 'Pro'}
@@ -186,6 +192,10 @@ export default function PanelClient({ business, initial }: Props) {
                 Copiar enlace
               </button>
             </section>
+
+            <PlanRequestCard currentPlan={stats.plan} initialRequest={planRequest} />
+
+            <LogoUploader businessId={business.id} businessName={business.name} initialPath={logoPath} onChange={setLogoPath} />
           </div>
 
           <div className="space-y-6">

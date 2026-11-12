@@ -5,9 +5,10 @@ import { createClient } from '@/lib/supabase/client'
 import { beep, unlockAudio } from '@/lib/browser-alerts'
 import { useQueueSync } from '@/lib/useQueueSync'
 import { useOrigin, useQrDataUrl } from '@/components/QrImage'
+import BusinessLogo from '@/components/BusinessLogo'
 import type { PublicBoardData } from '@/lib/types'
 
-/** RF07: pantalla para un TV o tablet. Solo muestra NÚMEROS, nunca nombres ni celulares. */
+/** RF07: pantalla para un TV o tablet. Muestra números y un nombre corto ("Laura M."); nunca celulares. */
 export default function PublicBoard({ slug, initial }: { slug: string; initial: PublicBoardData }) {
   const [board, setBoard] = useState<PublicBoardData>(initial)
   const [sound, setSound] = useState(false)
@@ -33,12 +34,16 @@ export default function PublicBoard({ slug, initial }: { slug: string; initial: 
     prevServing.current = board.now_serving
   }, [board.now_serving])
 
-  const next = board.next ?? []
+  // Compatibilidad: si la base aún no devuelve next_tickets, se muestran solo los números.
+  const next = board.next_tickets ?? (board.next ?? []).map((number) => ({ number, name: '' }))
 
   return (
     <main className="flex min-h-screen flex-col bg-slate-900 px-6 py-8 text-white">
       <header className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold sm:text-4xl">{board.name}</h1>
+        <div className="flex items-center gap-4">
+          <BusinessLogo path={board.logo_path} name={board.name ?? ''} className="h-14 w-14 sm:h-20 sm:w-20" />
+          <h1 className="text-2xl font-bold sm:text-4xl">{board.name}</h1>
+        </div>
         <button type="button" className="btn btn-secondary print:hidden"
           onClick={() => { unlockAudio(); setSound((s) => !s) }} aria-pressed={sound}>
           {sound ? '🔊 Sonido activado' : '🔈 Activar sonido'}
@@ -51,6 +56,9 @@ export default function PublicBoard({ slug, initial }: { slug: string; initial: 
           <p className="my-4 text-[9rem] font-extrabold leading-none text-emerald-400 sm:text-[16rem]">
             {board.now_serving ?? '—'}
           </p>
+          {board.now_serving != null && board.now_serving_name && (
+            <p className="mb-4 text-3xl font-bold text-white sm:text-5xl">{board.now_serving_name}</p>
+          )}
           <p className="text-xl text-slate-300 sm:text-3xl">
             {board.waiting_count === 0 ? 'No hay personas en espera' : `${board.waiting_count} en espera`}
           </p>
@@ -59,8 +67,11 @@ export default function PublicBoard({ slug, initial }: { slug: string; initial: 
             <p className="text-lg uppercase tracking-widest text-slate-300 sm:text-2xl">Próximos turnos</p>
             <ul className="mt-3 flex flex-wrap justify-center gap-3">
               {next.length === 0 && <li className="text-slate-400">—</li>}
-              {next.map((n) => (
-                <li key={n} className="min-w-[4.5rem] rounded-xl bg-slate-700 px-4 py-2 text-3xl font-bold sm:text-5xl">{n}</li>
+              {next.map((t) => (
+                <li key={t.number} className="min-w-[4.5rem] rounded-xl bg-slate-700 px-4 py-2 text-center">
+                  <span className="block text-3xl font-bold sm:text-5xl">{t.number}</span>
+                  {t.name && <span className="block max-w-[10rem] truncate text-sm text-slate-300 sm:text-lg">{t.name}</span>}
+                </li>
               ))}
             </ul>
           </div>

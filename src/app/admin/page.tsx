@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import AdminClient from '@/components/AdminClient'
 import { createClient } from '@/lib/supabase/server'
-import type { SuperAdminBusiness } from '@/lib/types'
+import type { SuperAdminBusiness, SuperAdminPlanRequest } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Super admin · TuTurno', robots: { index: false } }
@@ -27,5 +27,12 @@ export default async function AdminPage() {
     )
   }
 
-  return <AdminClient initial={(businesses ?? []) as SuperAdminBusiness[]} />
+  const { data: requests } = await supabase.rpc('admin_list_plan_requests')
+
+  return (
+    <AdminClient
+      initial={(businesses ?? []) as SuperAdminBusiness[]}
+      initialRequests={(requests ?? []) as SuperAdminPlanRequest[]}
+    />
+  )
 }

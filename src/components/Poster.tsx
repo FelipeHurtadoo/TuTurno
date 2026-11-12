@@ -1,10 +1,11 @@
 'use client'
 
 import Link from 'next/link'
+import BusinessLogo from './BusinessLogo'
 import { useOrigin, useQrDataUrl } from './QrImage'
 
 /** RF02: QR único del negocio, descargable (PNG) e imprimible como afiche. */
-export default function Poster({ businessName, slug }: { businessName: string; slug: string }) {
+export default function Poster({ businessName, slug, logoPath = null }: { businessName: string; slug: string; logoPath?: string | null }) {
   const origin = useOrigin()
   const url = origin ? `${origin}/n/${slug}` : null
   const qr = useQrDataUrl(url, 1024)
@@ -30,7 +31,10 @@ export default function Poster({ businessName, slug }: { businessName: string; s
       )}
 
       <article className="mx-auto max-w-2xl rounded-3xl bg-white p-10 text-center shadow-sm ring-1 ring-slate-200 print:shadow-none print:ring-0">
-        <p className="text-lg font-semibold text-indigo-700">{businessName}</p>
+        <div className="flex flex-col items-center gap-3">
+          <BusinessLogo path={logoPath} name={businessName} className="h-24 w-24" />
+          <p className="text-lg font-semibold text-indigo-700">{businessName}</p>
+        </div>
         <h1 className="mt-2 text-4xl font-extrabold leading-tight">Toma tu turno desde tu celular</h1>
         <p className="mt-2 text-lg text-slate-700">Sin filas, sin instalar nada.</p>
 

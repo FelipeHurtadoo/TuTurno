@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import BusinessLogo from '@/components/BusinessLogo'
 import Logo from '@/components/Logo'
 import JoinForm from '@/components/JoinForm'
 import { createPublicClient } from '@/lib/supabase/public'
@@ -29,8 +30,13 @@ export default async function JoinPage({ params }: { params: Promise<{ slug: str
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
       <div className="mb-6 flex justify-center"><Logo /></div>
       <div className="card">
-        <p className="text-sm font-medium text-slate-600">Estás a punto de tomar turno en</p>
-        <h1 className="mt-1 text-2xl font-bold">{info.name}</h1>
+        <div className="flex items-center gap-4">
+          <BusinessLogo path={info.logo_path} name={info.name ?? ''} className="h-16 w-16 ring-1 ring-slate-200" />
+          <div>
+            <p className="text-sm font-medium text-slate-600">Estás a punto de tomar turno en</p>
+            <h1 className="mt-1 text-2xl font-bold">{info.name}</h1>
+          </div>
+        </div>
         <p className="mt-2 text-sm text-slate-600">
           No necesitas instalar nada. Verás tu posición en la fila desde este celular y te avisaremos cuando se acerque tu turno.
         </p>

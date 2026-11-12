@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import CreateBusinessForm from '@/components/CreateBusinessForm'
 import PanelClient from '@/components/PanelClient'
 import { createClient } from '@/lib/supabase/server'
-import type { AdminSnapshot, Business } from '@/lib/types'
+import type { AdminSnapshot, Business, MyPlanRequest } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Panel · TuTurno', robots: { index: false } }
@@ -18,7 +18,7 @@ export default async function PanelPage() {
   // RLS ya limita esto al negocio del usuario; el .eq es una segunda barrera explícita.
   const { data: business } = await supabase
     .from('businesses')
-    .select('id, name, slug, plan, daily_limit')
+    .select('id, name, slug, plan, daily_limit, logo_path')
     .eq('owner_id', user.id)
     .maybeSingle()
 
@@ -27,7 +27,10 @@ export default async function PanelPage() {
     return <CreateBusinessForm defaultName={suggested} />
   }
 
-  const { data: snapshot, error } = await supabase.rpc('get_admin_snapshot', { p_business_id: business.id })
+  const [{ data: snapshot, error }, { data: planRequest }] = await Promise.all([
+    supabase.rpc('get_admin_snapshot', { p_business_id: business.id }),
+    supabase.rpc('get_my_plan_request'),
+  ])
   if (error || !snapshot) {
     return (
       <main className="mx-auto max-w-md px-4 py-10">
@@ -36,5 +39,11 @@ export default async function PanelPage() {
     )
   }
 
-  return <PanelClient business={business as Business} initial={snapshot as AdminSnapshot} />
+  return (
+    <PanelClient
+      business={business as Business}
+      initial={snapshot as AdminSnapshot}
+      planRequest={(planRequest as MyPlanRequest | null) ?? null}
+    />
+  )
 }

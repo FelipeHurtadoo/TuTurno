@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import BusinessLogo from './BusinessLogo'
 import { createClient } from '@/lib/supabase/client'
 import { friendlyError } from '@/lib/errors'
 import { formatDuration } from '@/lib/format'
@@ -100,7 +101,7 @@ export default function TicketView({ token }: { token: string }) {
 
   if (snap.expired) {
     return (
-      <Shell business={snap.business_name}>
+      <Shell business={snap.business_name} logo={snap.business_logo_path}>
         <h1 className="text-xl font-bold">Este turno era de otro día</h1>
         <p className="mt-2 text-slate-600">Los turnos se reinician cada día. Toma uno nuevo escaneando el QR.</p>
         {backLink}
@@ -113,7 +114,7 @@ export default function TicketView({ token }: { token: string }) {
   const ahead = snap.people_ahead ?? 0
 
   return (
-    <Shell business={snap.business_name}>
+    <Shell business={snap.business_name} logo={snap.business_logo_path}>
       <p className="text-sm font-medium text-slate-600">Hola, {snap.customer_name}</p>
       <p className="mt-3 text-sm uppercase tracking-wide text-slate-600">Tu turno</p>
       <p className="text-8xl font-extrabold leading-none text-indigo-700" aria-label={`Tu turno es el ${snap.number}`}>
@@ -201,11 +202,16 @@ export default function TicketView({ token }: { token: string }) {
   )
 }
 
-function Shell({ business, children }: { business?: string; children: React.ReactNode }) {
+function Shell({ business, logo, children }: { business?: string; logo?: string | null; children: React.ReactNode }) {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-8">
       <div className="card text-center">
-        {business && <p className="mb-4 text-lg font-bold text-slate-800">{business}</p>}
+        {business && (
+          <div className="mb-4 flex flex-col items-center gap-2">
+            <BusinessLogo path={logo} name={business} className="h-16 w-16 ring-1 ring-slate-200" />
+            <p className="text-lg font-bold text-slate-800">{business}</p>
+          </div>
+        )}
         {children}
       </div>
       <p className="mt-4 text-center text-xs text-slate-600">

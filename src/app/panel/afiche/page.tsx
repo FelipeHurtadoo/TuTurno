@@ -13,10 +13,10 @@ export default async function PosterPage() {
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('name, slug')
+    .select('name, slug, logo_path')
     .eq('owner_id', user.id)
     .maybeSingle()
   if (!business) redirect('/panel')
 
-  return <Poster businessName={business.name} slug={business.slug} />
+  return <Poster businessName={business.name} slug={business.slug} logoPath={business.logo_path} />
 }

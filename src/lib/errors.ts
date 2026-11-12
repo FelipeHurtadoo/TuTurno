@@ -15,6 +15,11 @@ const DB_ERRORS: Record<string, string> = {
   YA_TIENES_NEGOCIO: 'Tu cuenta ya tiene un negocio registrado.',
   DATOS_INVALIDOS: 'Revisa los datos del negocio (el nombre debe tener entre 2 y 80 caracteres).',
   PLAN_INVALIDO: 'Ese plan no es válido.',
+  YA_TIENES_ESE_PLAN: 'Tu negocio ya está en ese plan.',
+  SOLICITUD_PENDIENTE: 'Ya tienes una solicitud de cambio de plan pendiente.',
+  SOLICITUD_NO_ENCONTRADA: 'No encontramos esa solicitud.',
+  SOLICITUD_YA_RESUELTA: 'Esa solicitud ya fue resuelta. Actualizamos la lista.',
+  LOGO_INVALIDO: 'No pudimos guardar el logo. Inténtalo de nuevo.',
 }
 
 const OTHER_ERRORS: Array<[RegExp, string]> = [
